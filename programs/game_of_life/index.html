@@ -2,10 +2,14 @@
 
 <body>
   <button id="nextFrameBtn" type="button" style="display:none;">Next Frame</button>
-  <canvas id="gol" width="512" height="512">
+  <canvas id="gol" width="1024" height="1024">
   </canvas>
 </body>
 </html>
+
+<script type="text/javascript">
+  window.DEBUG = false;
+</script>
 
 <script id="shader-vs" type="x-shader/x-vertex">
   attribute vec2 aVertexPosition;
@@ -38,24 +42,26 @@
 
   uniform sampler2D uSampler;
 
-  uniform vec2 uTextureScale;
+  uniform vec2 uScale;
 
   mediump vec4 centerSample;
 
   void main(void) {
-    vec2 dUV_dXY = vec2(1.0, 1.0) / uTextureScale;
+    vec2 dUV_dXY = vec2(1.0, 1.0) / uScale;
     vec2 dUV_dX = vec2(dUV_dXY.x, 0.0);
     vec2 dUV_dY = vec2(0.0, dUV_dXY.y);
 
+    vec2 texCoord = gl_FragCoord.xy / uScale;
+
     // neighbor coords
-    vec2 top = vTextureCoord + dUV_dY;
-    vec2 topRight = vTextureCoord + dUV_dY + dUV_dX;
-    vec2 right = vTextureCoord + dUV_dX;
-    vec2 bottomRight = vTextureCoord - dUV_dY + dUV_dX;
-    vec2 bottom = vTextureCoord - dUV_dY;
-    vec2 bottomLeft = vTextureCoord - dUV_dY - dUV_dX;
-    vec2 left = vTextureCoord - dUV_dX;
-    vec2 topLeft = vTextureCoord + dUV_dY - dUV_dX;
+    vec2 top = texCoord + dUV_dY;
+    vec2 topRight = texCoord + dUV_dY + dUV_dX;
+    vec2 right = texCoord + dUV_dX;
+    vec2 bottomRight = texCoord - dUV_dY + dUV_dX;
+    vec2 bottom = texCoord - dUV_dY;
+    vec2 bottomLeft = texCoord - dUV_dY - dUV_dX;
+    vec2 left = texCoord - dUV_dX;
+    vec2 topLeft = texCoord + dUV_dY - dUV_dX;
 
     // samples
     vec4 topSample = texture2D(uSampler, top);
@@ -85,7 +91,6 @@
       leftState + topLeftState + centerState);
     int stateCount = int(stateSum);
 
-    // live cell checks
     if (0.0 < centerState) {
       if (stateCount < 2 || stateCount > 3) {
         gl_FragColor = vec4(centerSample.rgb, 0.0);
@@ -107,17 +112,16 @@
 
   varying highp vec2 vTextureCoord;
 
+  uniform vec2 uScale;
+
   uniform sampler2D uSampler;
 
   void main() {
-    gl_FragColor = texture2D(uSampler, vTextureCoord);
+    gl_FragColor = texture2D(uSampler, gl_FragCoord.xy / uScale);
   }
 </script>
 
 <script type="text/javascript">
-
-  var DEBUG = false;
-
   var gl;
   var canvas;
   var gameShaderProgram;
@@ -212,6 +216,7 @@
   }
 
   function handleTextureLoaded(image, texture) {
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
 
     texture.height = image.height;
@@ -221,12 +226,16 @@
   function initTextures(done) {
     stateTexture = loadImageTexture('images/state.png', function() {
       nextStateTexture = createSimpleTexture();
+      nextStateTexture.id = "1";
       gl.texImage2D(
         gl.TEXTURE_2D, 0, gl.RGBA, stateTexture.width, stateTexture.height, 0,
         gl.RGBA, gl.UNSIGNED_BYTE, null);
+      nextStateTexture.height = stateTexture.height;
+      nextStateTexture.width = stateTexture.width;
       done();
     });
 
+    stateTexture.id = "0";
   }
 
   function initBuffers() {
@@ -260,47 +269,48 @@
     nextStateTexture = tempTexture;
   }
 
+  function simulate() {
+    initBuffers();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, frameBuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, nextStateTexture, 0);
+    gl.viewport(0, 0, stateTexture.width, stateTexture.height);
+    gl.bindTexture(gl.TEXTURE_2D, stateTexture);
+    gl.useProgram(gameShaderProgram);
+    // Initialize shader program locations
+    vertexPositionAttribute = gl.getAttribLocation(gameShaderProgram, "aVertexPosition");
+    textureCoordAttribute = gl.getAttribLocation(gameShaderProgram, "aTextureCoord");
+    scaleLocation = gl.getUniformLocation(gameShaderProgram, "uScale");
+    gl.uniform2f(scaleLocation, stateTexture.width, stateTexture.height);
+    gl.uniform1i(gl.getUniformLocation(gameShaderProgram, "uSampler"), 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  }
+
+  function draw() {
+    // render current state to screen
+    initBuffers();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(1.0, 0.0, 0.0, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.bindTexture(gl.TEXTURE_2D, stateTexture);
+    gl.useProgram(displayShaderProgram);
+    // Initialize shader program locations
+    vertexPositionAttribute = gl.getAttribLocation(displayShaderProgram, "aVertexPosition");
+    textureCoordAttribute = gl.getAttribLocation(displayShaderProgram, "aTextureCoord");
+    scaleLocation = gl.getUniformLocation(displayShaderProgram, "uScale");
+    gl.uniform2f(scaleLocation, canvas.width, canvas.height);
+    gl.uniform1i(gl.getUniformLocation(displayShaderProgram, "uSampler"), 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  }
+
   function render() {
     if (!DEBUG) {
       window.requestAnimationFrame(render, canvas);
     }
 
-    initBuffers();
-
-    // render current state to next state texture
-    gl.bindFramebuffer(gl.FRAMEBUFFER, frameBuffer);
-    gl.bindTexture(gl.TEXTURE_2D, stateTexture);
-    gl.viewport(0, 0, stateTexture.width, stateTexture.height);
-    gl.useProgram(gameShaderProgram);
-    gl.framebufferTexture2D(
-      gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, nextStateTexture, 0);
-    scaleLocation = gl.getUniformLocation(gameShaderProgram, "uScale");
-    gl.uniform2f(scaleLocation, stateTexture.width, stateTexture.height);
-    textureScaleLocation = gl.getUniformLocation(gameShaderProgram, "uTextureScale");
-    gl.uniform2f(textureScaleLocation, stateTexture.width, stateTexture.height);
-    gl.bindTexture(gl.TEXTURE_2D, stateTexture);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.uniform1i(gl.getUniformLocation(gameShaderProgram, "uSampler"), 0);
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
-
-    // swap state textures to render nextstate as current state
+    simulate();
     swapStateTexture();
-
-    // render current state to screen
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.clearColor(1.0, 0.0, 0.0, 1.0);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    gl.bindTexture(gl.TEXTURE_2D, stateTexture);
-    gl.viewport(0, 0, canvas.width, canvas.height);
-    gl.useProgram(displayShaderProgram);
-    scaleLocation = gl.getUniformLocation(displayShaderProgram, "uScale");
-    gl.uniform2f(scaleLocation, canvas.width, canvas.height);
-    textureScaleLocation = gl.getUniformLocation(displayShaderProgram, "uTextureScale");
-    gl.uniform2f(textureScaleLocation, canvas.width, canvas.height);
-    gl.bindTexture(gl.TEXTURE_2D, stateTexture);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.uniform1i(gl.getUniformLocation(displayShaderProgram, "uSampler"), 0);
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    draw();
   }
 
   function init() {
@@ -310,28 +320,25 @@
     // init shader program
     initShaders();
 
-    // Initialize shader program locations
-    vertexPositionAttribute = gl.getAttribLocation(shaderProgram, "aVertexPosition");
-    textureCoordAttribute = gl.getAttribLocation(shaderProgram, "aTextureCoord");
-
     // init frame buffer for intermediate rendering and attach state texture
     frameBuffer = gl.createFramebuffer();
 
     // init textures, then start rendering
     initTextures(function() {
       console.log("INIT TEXTURES");
-      render();
-    });
+      draw();
+      if (DEBUG) {
+        // bind next frame button to render next frame and show button
+        var nextFrameBtn = document.getElementById('nextFrameBtn');
+        nextFrameBtn.onclick = function() {
+          render();
+        }
 
-    if (DEBUG) {
-      // bind next frame button to render next frame and show button
-      var nextFrameBtn = document.getElementById('nextFrameBtn');
-      nextFrameBtn.onclick = function() {
+        nextFrameBtn.style.display = "block";
+      } else {
         render();
       }
-
-      nextFrameBtn.style.display = "block";
-    }
+    });
   }
 
   window.onload = init;
